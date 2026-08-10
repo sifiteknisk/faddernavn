@@ -1,4 +1,14 @@
-import { ensureBoard, getBoardDatabase, readBoard, readVotedSuggestionIds } from "../../../db/board";
+import {
+  addPerson,
+  addSuggestion,
+  deletePerson,
+  deleteSuggestion,
+  ensureBoard,
+  readBoard,
+  readVotedSuggestionIds,
+  unvote,
+  vote,
+} from "../../../db/board";
 
 type Action =
   | { action: "addPerson"; name?: string }
@@ -38,7 +48,8 @@ export async function GET(request: Request) {
     const voterId = readVoter(request);
     return await boardResponse(request, voterId);
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Kunne ikke laste inn navnene." }, { status: 500 });
+    console.error(error);
+    return Response.json({ error: "Kunne ikke laste inn navnene." }, { status: 500 });
   }
 }
 
@@ -47,57 +58,43 @@ export async function POST(request: Request) {
     await ensureBoard();
     const voterId = readVoter(request);
     const payload = (await request.json()) as Action;
-    const db = getBoardDatabase();
 
     if (payload.action === "addPerson") {
       const name = cleanText(payload.name, 50);
       if (!name) return Response.json({ error: "Skriv inn navnet på personen." }, { status: 400 });
-      const last = await db.prepare("SELECT COALESCE(MAX(position), -1) AS position FROM people").first<{ position: number }>();
-      await db.prepare("INSERT INTO people (id, name, position) VALUES (?, ?, ?)").bind(crypto.randomUUID(), name, Number(last?.position ?? -1) + 1).run();
+      await addPerson(name);
     } else if (payload.action === "addSuggestion") {
       const personId = cleanText(payload.personId, 100);
       const label = cleanText(payload.label, 60);
       if (!personId || !label) return Response.json({ error: "Skriv inn et navneforslag." }, { status: 400 });
-      const person = await db.prepare("SELECT id FROM people WHERE id = ?").bind(personId).first();
-      if (!person) return Response.json({ error: "Personen finnes ikke lenger." }, { status: 404 });
-      await db.prepare("INSERT INTO suggestions (id, person_id, label) VALUES (?, ?, ?)").bind(crypto.randomUUID(), personId, label).run();
+      if (!(await addSuggestion(personId, label))) {
+        return Response.json({ error: "Personen finnes ikke lenger." }, { status: 404 });
+      }
     } else if (payload.action === "vote") {
       const suggestionId = cleanText(payload.suggestionId, 100);
       if (!suggestionId) return Response.json({ error: "Velg et navn å stemme på." }, { status: 400 });
-      const suggestion = await db.prepare("SELECT id FROM suggestions WHERE id = ?").bind(suggestionId).first();
-      if (!suggestion) return Response.json({ error: "Navneforslaget finnes ikke lenger." }, { status: 404 });
-      await db.batch([
-        db.prepare("INSERT OR IGNORE INTO votes (suggestion_id, voter_id) VALUES (?, ?)").bind(suggestionId, voterId),
-        db.prepare("UPDATE suggestions SET points = (SELECT COUNT(*) FROM votes WHERE suggestion_id = ?) WHERE id = ?").bind(suggestionId, suggestionId),
-      ]);
+      if (!(await vote(suggestionId, voterId))) {
+        return Response.json({ error: "Navneforslaget finnes ikke lenger." }, { status: 404 });
+      }
     } else if (payload.action === "unvote") {
       const suggestionId = cleanText(payload.suggestionId, 100);
       if (!suggestionId) return Response.json({ error: "Velg en stemme å fjerne." }, { status: 400 });
-      await db.batch([
-        db.prepare("DELETE FROM votes WHERE suggestion_id = ? AND voter_id = ?").bind(suggestionId, voterId),
-        db.prepare("UPDATE suggestions SET points = (SELECT COUNT(*) FROM votes WHERE suggestion_id = ?) WHERE id = ?").bind(suggestionId, suggestionId),
-      ]);
+      await unvote(suggestionId, voterId);
     } else if (payload.action === "deletePerson") {
       const personId = cleanText(payload.personId, 100);
       if (!personId) return Response.json({ error: "Velg en person å fjerne." }, { status: 400 });
-      await db.batch([
-        db.prepare("DELETE FROM votes WHERE suggestion_id IN (SELECT id FROM suggestions WHERE person_id = ?)").bind(personId),
-        db.prepare("DELETE FROM suggestions WHERE person_id = ?").bind(personId),
-        db.prepare("DELETE FROM people WHERE id = ?").bind(personId),
-      ]);
+      await deletePerson(personId);
     } else if (payload.action === "deleteSuggestion") {
       const suggestionId = cleanText(payload.suggestionId, 100);
       if (!suggestionId) return Response.json({ error: "Velg et navn å fjerne." }, { status: 400 });
-      await db.batch([
-        db.prepare("DELETE FROM votes WHERE suggestion_id = ?").bind(suggestionId),
-        db.prepare("DELETE FROM suggestions WHERE id = ?").bind(suggestionId),
-      ]);
+      await deleteSuggestion(suggestionId);
     } else {
       return Response.json({ error: "Ukjent handling." }, { status: 400 });
     }
 
     return await boardResponse(request, voterId);
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Kunne ikke lagre endringen." }, { status: 500 });
+    console.error(error);
+    return Response.json({ error: "Kunne ikke lagre endringen." }, { status: 500 });
   }
 }
