@@ -18,13 +18,29 @@ type SuggestionRow = {
 let client: ReturnType<typeof neon> | undefined;
 let initialization: Promise<void> | undefined;
 
+function connectionString() {
+  const knownValue =
+    process.env.DATABASE_URL ??
+    process.env.POSTGRES_URL ??
+    process.env.DATABASE_URL_UNPOOLED ??
+    process.env.POSTGRES_URL_NON_POOLING;
+  if (knownValue) return knownValue;
+
+  const prefixedValue = Object.entries(process.env).find(
+    ([name, value]) =>
+      Boolean(value) &&
+      (name.endsWith("_DATABASE_URL") || name.endsWith("_POSTGRES_URL")),
+  );
+  return prefixedValue?.[1];
+}
+
 function database() {
-  const connectionString = process.env.DATABASE_URL ?? process.env.POSTGRES_URL;
-  if (!connectionString) {
+  const url = connectionString();
+  if (!url) {
     throw new Error("Databasen er ikke koblet til.");
   }
 
-  client ??= neon(connectionString);
+  client ??= neon(url);
   return client;
 }
 

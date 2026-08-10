@@ -49,7 +49,11 @@ export async function GET(request: Request) {
     return await boardResponse(request, voterId);
   } catch (error) {
     console.error(error);
-    return Response.json({ error: "Kunne ikke laste inn navnene." }, { status: 500 });
+    const message =
+      error instanceof Error && error.message === "Databasen er ikke koblet til."
+        ? "Databasen er ikke koblet til produksjonsmiljøet."
+        : "Kunne ikke laste inn navnene.";
+    return Response.json({ error: message }, { status: 500 });
   }
 }
 
